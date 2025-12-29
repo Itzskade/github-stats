@@ -68,11 +68,11 @@ const fetchTopLanguages = async (
     throw new MissingParamError(["username"]);
   }
 
-  // Obtener token desde variable de entorno
-  const token = process.env.PAT1;
+  // ⚡ Obtener token desde variable de entorno
+  const token = process.env.PAT_1;
   if (!token) {
     throw new CustomError(
-      "GitHub token (PAT1) not found in environment variables.",
+      "GitHub token (PAT_1) not found in environment variables.",
       CustomError.GRAPHQL_ERROR
     );
   }
