@@ -1,7 +1,7 @@
 // @ts-check
 
-import { renderTopLanguages } from "../src/cards/top-languages.js";
-import { guardAccess } from "../src/common/access.js";
+import { renderTopLanguages } from "./../src/cards/top-languages.js";
+import { guardAccess } from "./../src/common/access.js";
 import {
   CACHE_TTL,
   resolveCacheSeconds,
