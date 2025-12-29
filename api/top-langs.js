@@ -1,5 +1,6 @@
 // @ts-check
 
+import 'dotenv/config';
 import { renderTopLanguages } from "./../src/cards/top-languages.js";
 import { guardAccess } from "./../src/common/access.js";
 import {
