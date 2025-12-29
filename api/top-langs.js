@@ -1,6 +1,5 @@
 // @ts-check
-
-import 'dotenv/config';
+import 'dotenv/config'; // ✅ Importante para leer variables de entorno
 import { renderTopLanguages } from "./../src/cards/top-languages.js";
 import { guardAccess } from "./../src/common/access.js";
 import {
@@ -44,8 +43,10 @@ export default async (req, res) => {
     hide_progress,
     stats_format,
   } = req.query;
+
   res.setHeader("Content-Type", "image/svg+xml");
 
+  // Guard access
   const access = guardAccess({
     res,
     id: username,
@@ -62,6 +63,7 @@ export default async (req, res) => {
     return access.result;
   }
 
+  // Locale check
   if (locale && !isLocaleAvailable(locale)) {
     return res.send(
       renderError({
@@ -74,10 +76,11 @@ export default async (req, res) => {
           border_color,
           theme,
         },
-      }),
+      })
     );
   }
 
+  // Layout validation
   if (
     layout !== undefined &&
     (typeof layout !== "string" ||
@@ -94,10 +97,11 @@ export default async (req, res) => {
           border_color,
           theme,
         },
-      }),
+      })
     );
   }
 
+  // Stats format validation
   if (
     stats_format !== undefined &&
     (typeof stats_format !== "string" ||
@@ -114,17 +118,22 @@ export default async (req, res) => {
           border_color,
           theme,
         },
-      }),
+      })
     );
   }
 
   try {
+    // ✅ Usa token de entorno
+    const token = process.env.PAT_1;
+
     const topLangs = await fetchTopLanguages(
       username,
       parseArray(exclude_repo),
       size_weight,
       count_weight,
+      token // ⚡ Pasamos el token a la función
     );
+
     const cacheSeconds = resolveCacheSeconds({
       requested: parseInt(cache_seconds, 10),
       def: CACHE_TTL.TOP_LANGS_CARD.DEFAULT,
@@ -153,7 +162,7 @@ export default async (req, res) => {
         disable_animations: parseBoolean(disable_animations),
         hide_progress: parseBoolean(hide_progress),
         stats_format,
-      }),
+      })
     );
   } catch (err) {
     setErrorCacheHeaders(res);
@@ -170,7 +179,7 @@ export default async (req, res) => {
             theme,
             show_repo_link: !(err instanceof MissingParamError),
           },
-        }),
+        })
       );
     }
     return res.send(
@@ -183,7 +192,7 @@ export default async (req, res) => {
           border_color,
           theme,
         },
-      }),
+      })
     );
   }
 };
