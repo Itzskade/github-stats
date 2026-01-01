@@ -1,3 +1,55 @@
+// @ts-check
+import { request } from "../common/http.js";
+import retryer from "../common/retryer.js";
+import { MissingParamError, CustomError } from "../common/error.js";
+import logger from "../common/log.js";
+
+// Lista global de repositorios que quieres excluir siempre (opcional, puedes dejar vacío)
+const excludeRepositories = [];
+
+/**
+ * Fetcher específico para top languages
+ * IMPORTANTE: Hemos eliminado "isFork: false" para que incluya forks
+ */
+const fetcher = (variables, token) => {
+  return request(
+    {
+      query: `
+        query userInfo($login: String!) {
+          user(login: $login) {
+            repositories(ownerAffiliations: OWNER, first: 100, orderBy: {field: PUSHED_AT, direction: DESC}) {
+              nodes {
+                name
+                languages(first: 10, orderBy: {field: SIZE, direction: DESC}) {
+                  edges {
+                    size
+                    node {
+                      name
+                      color
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `,
+      variables,
+    },
+    {
+      Authorization: `Bearer ${token}`,
+    },
+  );
+};
+
+/**
+ * Obtiene los lenguajes más usados del usuario
+ * @param {string} username
+ * @param {string[]} [exclude_repo=[]]
+ * @param {number|string} [size_weight=1]
+ * @param {number|string} [count_weight=0]
+ * @returns {Promise<Object>}
+ */
 const fetchTopLanguages = async (
   username,
   exclude_repo = [],
@@ -5,6 +57,7 @@ const fetchTopLanguages = async (
   count_weight = 0
 ) => {
   if (!username) throw new MissingParamError(["username"]);
+
   const token = process.env.PAT_1;
   if (!token)
     throw new CustomError(
@@ -18,7 +71,7 @@ const fetchTopLanguages = async (
   count_weight = parseFloat(count_weight);
   if (isNaN(count_weight) || count_weight < 0) count_weight = 0;
 
-  const res = await retryWithBackoff(() => fetcher({ login: username }, token));
+  const res = await retryer(() => fetcher({ login: username }, token));
 
   if (res.data.errors) {
     logger.error(res.data.errors);
@@ -30,21 +83,23 @@ const fetchTopLanguages = async (
 
   let repoNodes = res.data.data.user.repositories.nodes || [];
 
-  // Filtrar repos excluidos
+  // Filtrar repos excluidos (globales + los que pase el usuario)
   const allExcluded = [...excludeRepositories, ...exclude_repo];
   repoNodes = repoNodes.filter((r) => !allExcluded.includes(r.name));
 
-  // Si no quedan repos, devolver objeto vacío
   if (repoNodes.length === 0) {
     return {};
   }
 
   const langMap = {};
+
   repoNodes.forEach((repo) => {
     if (!repo.languages?.edges?.length) return;
+
     repo.languages.edges.forEach((edge) => {
       const name = edge.node.name;
       const size = edge.size || 0;
+
       if (!langMap[name]) {
         langMap[name] = {
           name,
@@ -58,12 +113,11 @@ const fetchTopLanguages = async (
     });
   });
 
-  // Si no se detectó ningún lenguaje
   if (Object.keys(langMap).length === 0) {
     return {};
   }
 
-  // Aplicar pesos de forma segura
+  // Aplicar pesos
   Object.values(langMap).forEach((lang) => {
     let weightedSize = lang.size;
     let weightedCount = lang.count;
@@ -81,11 +135,8 @@ const fetchTopLanguages = async (
     lang.size = weightedSize * weightedCount;
   });
 
-  // Calcular total seguro
-  const totalSize = Object.values(langMap).reduce(
-    (sum, lang) => sum + (lang.size || 0),
-    0
-  );
+  // Calcular total y porcentajes
+  const totalSize = Object.values(langMap).reduce((sum, lang) => sum + (lang.size || 0), 0);
   const finalTotal = totalSize > 0 ? totalSize : 1;
 
   Object.values(langMap).forEach((lang) => {
@@ -93,7 +144,7 @@ const fetchTopLanguages = async (
     lang.percent = Math.round(lang.percent * 100) / 100;
   });
 
-  // Ordenar por tamaño ponderado
+  // Ordenar y devolver
   const topLangs = Object.values(langMap)
     .sort((a, b) => b.size - a.size)
     .reduce((acc, lang) => {
@@ -101,20 +152,7 @@ const fetchTopLanguages = async (
       return acc;
     }, {});
 
-  // ==================================================
-  // === PROTECCIÓN FINAL ABSOLUTA CONTRA NaN/Infinity ===
-  // ==================================================
-  Object.values(topLangs).forEach((lang) => {
-    if (!isFinite(lang.size) || isNaN(lang.size)) {
-      lang.size = 0;
-    }
-    if (!isFinite(lang.percent) || isNaN(lang.percent)) {
-      lang.percent = 0;
-    } else {
-      lang.percent = Math.round(lang.percent * 100) / 100; // 2 decimales seguros
-    }
-  });
-  // ==================================================
-
   return topLangs;
 };
+
+export { fetchTopLanguages };
