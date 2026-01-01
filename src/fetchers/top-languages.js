@@ -1,98 +1,110 @@
-// @ts-check
-import { logger } from "../common/log.js";
-import { excludeRepositories } from "../common/envs.js";
-import { CustomError, MissingParamError } from "../common/error.js";
-import { wrapTextMultiline } from "../common/fmt.js";
-import { request } from "../common/http.js";
-
-/** @typedef {import("./types").TopLangData} TopLangData */
-
-const fetcher = async (variables, token) => {
-  return request(
-    {
-      query: `
-        query userInfo($login: String!) {
-          user(login: $login) {
-            repositories(ownerAffiliations: OWNER, isFork: false, first: 50) {
-              nodes {
-                name
-                languages(first: 5, orderBy: {field: SIZE, direction: DESC}) {
-                  edges {
-                    size
-                    node {
-                      color
-                      name
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      `,
-      variables,
-    },
-    {
-      Authorization: `token ${token}`,
-    }
-  );
-};
-
-/** Retry helper with exponential backoff */
-const retryWithBackoff = async (fn, retries = 3, delayMs = 500) => {
-  try {
-    return await fn();
-  } catch (err) {
-    if (retries <= 0) throw err;
-    logger.warn(`Fetch failed, retrying in ${delayMs}ms... (${retries} retries left)`);
-    await new Promise(r => setTimeout(r, delayMs));
-    return retryWithBackoff(fn, retries - 1, delayMs * 2);
-  }
-};
-
-const fetchTopLanguages = async (username, exclude_repo = [], size_weight = 1, count_weight = 0) => {
+const fetchTopLanguages = async (
+  username,
+  exclude_repo = [],
+  size_weight = 1,
+  count_weight = 0
+) => {
   if (!username) throw new MissingParamError(["username"]);
 
   const token = process.env.PAT_1;
-  if (!token) throw new CustomError("GitHub token (PAT_1) not found.", CustomError.GRAPHQL_ERROR);
+  if (!token)
+    throw new CustomError(
+      "GitHub token (PAT_1) not found.",
+      CustomError.GRAPHQL_ERROR
+    );
 
-  // Convertir weights a números válidos
-  size_weight = isNaN(parseFloat(size_weight)) ? 1 : parseFloat(size_weight);
-  count_weight = isNaN(parseFloat(count_weight)) ? 0 : parseFloat(count_weight);
+  // Validar y sanitizar weights
+  size_weight = parseFloat(size_weight);
+  if (isNaN(size_weight) || size_weight < 0) size_weight = 1;
+
+  count_weight = parseFloat(count_weight);
+  if (isNaN(count_weight) || count_weight < 0) count_weight = 0;
 
   const res = await retryWithBackoff(() => fetcher({ login: username }, token));
 
   if (res.data.errors) {
     logger.error(res.data.errors);
-    throw new CustomError(res.data.errors[0]?.message || "GraphQL API error", CustomError.GRAPHQL_ERROR);
+    throw new CustomError(
+      res.data.errors[0]?.message || "GraphQL API error",
+      CustomError.GRAPHQL_ERROR
+    );
   }
 
-  let repoNodes = res.data.data.user.repositories.nodes;
+  let repoNodes = res.data.data.user.repositories.nodes || [];
 
+  // Filtrar repos excluidos
   const allExcluded = [...excludeRepositories, ...exclude_repo];
-  repoNodes = repoNodes.filter(r => !allExcluded.includes(r.name));
+  repoNodes = repoNodes.filter((r) => !allExcluded.includes(r.name));
+
+  // Si no quedan repos, devolver objeto vacío
+  if (repoNodes.length === 0) {
+    return {};
+  }
 
   const langMap = {};
-  repoNodes.forEach(repo => {
-    repo.languages.edges.forEach(edge => {
+
+  repoNodes.forEach((repo) => {
+    if (!repo.languages?.edges?.length) return; // Repo sin lenguajes
+
+    repo.languages.edges.forEach((edge) => {
       const name = edge.node.name;
-      if (!langMap[name]) langMap[name] = { name, color: edge.node.color, size: 0, count: 0 };
-      langMap[name].size += edge.size;
+      const size = edge.size || 0;
+
+      if (!langMap[name]) {
+        langMap[name] = {
+          name,
+          color: edge.node.color || "#000000",
+          size: 0,
+          count: 0,
+        };
+      }
+      langMap[name].size += size;
       langMap[name].count += 1;
     });
   });
 
-  // Aplicar weights
-  Object.values(langMap).forEach(lang => {
-    lang.size = Math.pow(lang.size, size_weight) * Math.pow(lang.count, count_weight);
+  // Si no se detectó ningún lenguaje en ningún repo
+  if (Object.keys(langMap).length === 0) {
+    return {};
+  }
+
+  // Aplicar pesos de forma segura
+  Object.values(langMap).forEach((lang) => {
+    let weightedSize = lang.size;
+    let weightedCount = lang.count;
+
+    // Math.pow(0, 0) = 1 en JS, pero si el exponente es negativo da Infinity
+    if (size_weight !== 0) {
+      weightedSize = Math.pow(lang.size || 1, size_weight); // usar 1 si size=0 para evitar 0^neg
+    } else {
+      weightedSize = 1;
+    }
+
+    if (count_weight !== 0) {
+      weightedCount = Math.pow(lang.count || 1, count_weight);
+    } else {
+      weightedCount = 1;
+    }
+
+    lang.size = weightedSize * weightedCount;
   });
 
-  // Normalizar a porcentaje total
-  const totalSize = Object.values(langMap).reduce((sum, lang) => sum + lang.size, 0) || 1; // Evitar división por 0
-  Object.values(langMap).forEach(lang => {
-    lang.percent = (lang.size / totalSize) * 100;
+  // Calcular total seguro
+  const totalSize = Object.values(langMap).reduce(
+    (sum, lang) => sum + (lang.size || 0),
+    0
+  );
+
+  // Si por algún motivo totalSize es 0 (muy raro con las correcciones), asignar 100% igualitario
+  const finalTotal = totalSize > 0 ? totalSize : 1;
+
+  Object.values(langMap).forEach((lang) => {
+    lang.percent = (lang.size / finalTotal) * 100;
+    // Opcional: redondear a 2 decimales
+    lang.percent = Math.round(lang.percent * 100) / 100;
   });
 
+  // Ordenar por tamaño ponderado y devolver
   const topLangs = Object.values(langMap)
     .sort((a, b) => b.size - a.size)
     .reduce((acc, lang) => {
@@ -102,5 +114,3 @@ const fetchTopLanguages = async (username, exclude_repo = [], size_weight = 1, c
 
   return topLangs;
 };
-
-export { fetchT
