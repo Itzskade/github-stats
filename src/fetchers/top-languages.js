@@ -5,7 +5,6 @@ const fetchTopLanguages = async (
   count_weight = 0
 ) => {
   if (!username) throw new MissingParamError(["username"]);
-
   const token = process.env.PAT_1;
   if (!token)
     throw new CustomError(
@@ -16,7 +15,6 @@ const fetchTopLanguages = async (
   // Validar y sanitizar weights
   size_weight = parseFloat(size_weight);
   if (isNaN(size_weight) || size_weight < 0) size_weight = 1;
-
   count_weight = parseFloat(count_weight);
   if (isNaN(count_weight) || count_weight < 0) count_weight = 0;
 
@@ -42,14 +40,11 @@ const fetchTopLanguages = async (
   }
 
   const langMap = {};
-
   repoNodes.forEach((repo) => {
-    if (!repo.languages?.edges?.length) return; // Repo sin lenguajes
-
+    if (!repo.languages?.edges?.length) return;
     repo.languages.edges.forEach((edge) => {
       const name = edge.node.name;
       const size = edge.size || 0;
-
       if (!langMap[name]) {
         langMap[name] = {
           name,
@@ -63,7 +58,7 @@ const fetchTopLanguages = async (
     });
   });
 
-  // Si no se detectó ningún lenguaje en ningún repo
+  // Si no se detectó ningún lenguaje
   if (Object.keys(langMap).length === 0) {
     return {};
   }
@@ -73,19 +68,16 @@ const fetchTopLanguages = async (
     let weightedSize = lang.size;
     let weightedCount = lang.count;
 
-    // Math.pow(0, 0) = 1 en JS, pero si el exponente es negativo da Infinity
     if (size_weight !== 0) {
-      weightedSize = Math.pow(lang.size || 1, size_weight); // usar 1 si size=0 para evitar 0^neg
+      weightedSize = Math.pow(lang.size || 1, size_weight);
     } else {
       weightedSize = 1;
     }
-
     if (count_weight !== 0) {
       weightedCount = Math.pow(lang.count || 1, count_weight);
     } else {
       weightedCount = 1;
     }
-
     lang.size = weightedSize * weightedCount;
   });
 
@@ -94,23 +86,35 @@ const fetchTopLanguages = async (
     (sum, lang) => sum + (lang.size || 0),
     0
   );
-
-  // Si por algún motivo totalSize es 0 (muy raro con las correcciones), asignar 100% igualitario
   const finalTotal = totalSize > 0 ? totalSize : 1;
 
   Object.values(langMap).forEach((lang) => {
     lang.percent = (lang.size / finalTotal) * 100;
-    // Opcional: redondear a 2 decimales
     lang.percent = Math.round(lang.percent * 100) / 100;
   });
 
-  // Ordenar por tamaño ponderado y devolver
+  // Ordenar por tamaño ponderado
   const topLangs = Object.values(langMap)
     .sort((a, b) => b.size - a.size)
     .reduce((acc, lang) => {
       acc[lang.name] = lang;
       return acc;
     }, {});
+
+  // ==================================================
+  // === PROTECCIÓN FINAL ABSOLUTA CONTRA NaN/Infinity ===
+  // ==================================================
+  Object.values(topLangs).forEach((lang) => {
+    if (!isFinite(lang.size) || isNaN(lang.size)) {
+      lang.size = 0;
+    }
+    if (!isFinite(lang.percent) || isNaN(lang.percent)) {
+      lang.percent = 0;
+    } else {
+      lang.percent = Math.round(lang.percent * 100) / 100; // 2 decimales seguros
+    }
+  });
+  // ==================================================
 
   return topLangs;
 };
