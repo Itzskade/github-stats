@@ -38,12 +38,7 @@ const fetcher = async (variables, token) => {
   );
 };
 
-/**
- * Retry helper with exponential backoff
- * @param {function} fn Function to retry
- * @param {number} retries Number of retries
- * @param {number} delayMs Initial delay in ms
- */
+/** Retry helper with exponential backoff */
 const retryWithBackoff = async (fn, retries = 3, delayMs = 500) => {
   try {
     return await fn();
@@ -51,7 +46,7 @@ const retryWithBackoff = async (fn, retries = 3, delayMs = 500) => {
     if (retries <= 0) throw err;
     logger.warn(`Fetch failed, retrying in ${delayMs}ms... (${retries} retries left)`);
     await new Promise(r => setTimeout(r, delayMs));
-    return retryWithBackoff(fn, retries - 1, delayMs * 2); // Exponencial
+    return retryWithBackoff(fn, retries - 1, delayMs * 2);
   }
 };
 
@@ -61,7 +56,10 @@ const fetchTopLanguages = async (username, exclude_repo = [], size_weight = 1, c
   const token = process.env.PAT_1;
   if (!token) throw new CustomError("GitHub token (PAT_1) not found.", CustomError.GRAPHQL_ERROR);
 
-  // Retry fetcher con backoff
+  // Convertir weights a números válidos
+  size_weight = isNaN(parseFloat(size_weight)) ? 1 : parseFloat(size_weight);
+  count_weight = isNaN(parseFloat(count_weight)) ? 0 : parseFloat(count_weight);
+
   const res = await retryWithBackoff(() => fetcher({ login: username }, token));
 
   if (res.data.errors) {
@@ -84,8 +82,15 @@ const fetchTopLanguages = async (username, exclude_repo = [], size_weight = 1, c
     });
   });
 
+  // Aplicar weights
   Object.values(langMap).forEach(lang => {
     lang.size = Math.pow(lang.size, size_weight) * Math.pow(lang.count, count_weight);
+  });
+
+  // Normalizar a porcentaje total
+  const totalSize = Object.values(langMap).reduce((sum, lang) => sum + lang.size, 0) || 1; // Evitar división por 0
+  Object.values(langMap).forEach(lang => {
+    lang.percent = (lang.size / totalSize) * 100;
   });
 
   const topLangs = Object.values(langMap)
@@ -98,5 +103,4 @@ const fetchTopLanguages = async (username, exclude_repo = [], size_weight = 1, c
   return topLangs;
 };
 
-export { fetchTopLanguages };
-export default fetchTopLanguages;
+export { fetchT
