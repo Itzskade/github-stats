@@ -105,9 +105,12 @@ const trimTopLanguages = (topLangs, langs_count, hide) => {
  * Get display value (percentage or bytes)
  */
 const getDisplayValue = (lang, format) => {
-  const percent = lang.percent ?? 0;
+  let percent = lang.percent;
+  if (!isFinite(percent) || isNaN(percent)) percent = 0;
+  percent = Math.round(percent * 100) / 100; // 2 decimales seguros
+
   return format === "bytes"
-    ? formatBytes(lang.size)
+    ? formatBytes(lang.size ?? 0)
     : `${percent.toFixed(2)}%`;
 };
 
